@@ -23,6 +23,9 @@ class EnvironmentConfig:
             3: 0.20   # 20%
         }
         
+        # 에이전트 설정
+        self.agent_radius = 0 # 0이면 1x1x1, 1이면 3x3x3
+        
     def get_stage_size(self, stage_idx):
         """해당 스테이지의 환경 크기 반환"""
         return self.stage_sizes.get(stage_idx, (10, 10, 10))

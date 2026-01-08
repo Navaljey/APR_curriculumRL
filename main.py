@@ -151,7 +151,7 @@ def test_system(curriculum, sensor, reward_calc, env_config, ppo_agent):
     env_config.print_stage_info(stage_idx)
     
     # 환경 생성
-    environment = NodeEnvironment(*env_size)
+    environment = NodeEnvironment(*env_size, agent_radius=env_config.agent_radius)
     
     # 장애물 추가
     obstacles = env_config.create_random_obstacles(env_size, num_obstacles=3)

@@ -59,8 +59,94 @@ def plot_environment(env, path=None, title="Environment", **kwargs):
         
     plt.show()
 
+
+def _create_sphere_mesh(pos, radius, color='blue', resolution=6):
+    """구 메쉬 생성 (조인트용)"""
+    import plotly.graph_objects as go
+    
+    phi = np.linspace(0, np.pi, resolution)
+    theta = np.linspace(0, 2*np.pi, resolution)
+    phi, theta = np.meshgrid(phi, theta)
+    
+    x = pos[0] + radius * np.sin(phi) * np.cos(theta)
+    y = pos[1] + radius * np.sin(phi) * np.sin(theta)
+    z = pos[2] + radius * np.cos(phi)
+    
+    return go.Surface(
+        x=x, y=y, z=z,
+        colorscale=[[0, color], [1, color]],
+        showscale=False,
+        opacity=1.0,
+        name='Pipe Joint'
+    )
+
+def _create_cylinder_mesh(p1, p2, radius, color='cyan', resolution=6):
+    """두 점을 잇는 원통 메쉬 생성"""
+    import plotly.graph_objects as go
+    
+    # 벡터 계산
+    v = p2 - p1
+    length = np.linalg.norm(v)
+    if length == 0:
+        return None
+        
+    # 원통의 기본 좌표 생성 (Z축 정렬)
+    z = np.linspace(0, length, 2)
+    theta = np.linspace(0, 2*np.pi, resolution)
+    theta_grid, z_grid = np.meshgrid(theta, z)
+    
+    x_grid = radius * np.cos(theta_grid)
+    y_grid = radius * np.sin(theta_grid)
+    
+    # 회전 변환 (Z축 -> v 벡터 방향)
+    # 기본 Z축 단위 벡터
+    k = np.array([0, 0, 1])
+    # 회전 축 (외적)
+    if np.allclose(v/length, k):
+        # 이미 Z축 정렬됨
+        R = np.eye(3)
+    elif np.allclose(v/length, -k):
+        # -Z축 (180도 회전) -> X축 기준 180도
+        R = np.array([[1, 0, 0], [0, -1, 0], [0, 0, -1]])
+    else:
+        # Rodrigues' rotation formula
+        u = np.cross(k, v/length)
+        u = u / np.linalg.norm(u)
+        cost = np.dot(k, v/length)
+        sint = np.linalg.norm(np.cross(k, v/length))
+        
+        # Skew-symmetric matric
+        K = np.array([[0, -u[2], u[1]],
+                      [u[2], 0, -u[0]],
+                      [-u[1], u[0], 0]])
+        R = np.eye(3) + K * sint + (K @ K) * (1 - cost)
+        
+    # 좌표 변환 적용
+    # x,y,z 그리드를 (N, M) 형태 유지하며 변환
+    new_x = np.zeros_like(x_grid)
+    new_y = np.zeros_like(y_grid)
+    new_z = np.zeros_like(z_grid)
+    
+    for i in range(x_grid.shape[0]):
+        for j in range(x_grid.shape[1]):
+            # 로컬 좌표
+            vec = np.array([x_grid[i,j], y_grid[i,j], z_grid[i,j]])
+            # 회전 + 평행이동(p1)
+            new_vec = R @ vec + p1
+            new_x[i,j] = new_vec[0]
+            new_y[i,j] = new_vec[1]
+            new_z[i,j] = new_vec[2]
+            
+    return go.Surface(
+        x=new_x, y=new_y, z=new_z,
+        colorscale=[[0, color], [1, color]],
+        showscale=False,
+        opacity=1.0,
+        name='Pipe Segment'
+    )
+
 def plot_environment_interactive(env, path=None, title="Interactive Environment", **kwargs):
-    """Plotly를 이용한 3D 상호작용 환경 시각화"""
+    """Plotly를 이용한 3D 상호작용 환경 시각화 (Volumetric)"""
     try:
         import plotly.graph_objects as go
     except ImportError:
@@ -68,6 +154,9 @@ def plot_environment_interactive(env, path=None, title="Interactive Environment"
         return
 
     x_size, y_size, z_size = env.grid_size
+    agent_radius = getattr(env, 'agent_radius', 0)
+    # 실제 표현될 반경 (0 -> 0.5, 1 -> 1.5 등 3x3 박스에 꽉 차게)
+    visual_radius = agent_radius + 0.4
     
     data = []
     
@@ -81,37 +170,50 @@ def plot_environment_interactive(env, path=None, title="Interactive Environment"
             name='Obstacle'
         ))
         
-    # 2. 시작점 (파란색 구)
+    # 2. 시작점 (파란색 구 - 더 크게)
     if env.path_history:
         start = env.path_history[0]
-        data.append(go.Scatter3d(
-            x=[start[0]], y=[start[1]], z=[start[2]],
-            mode='markers',
-            marker=dict(size=10, color='blue', symbol='circle'),
-            name='Start'
-        ))
+        # 시작점 강조
+        data.append(_create_sphere_mesh(start, visual_radius * 1.2, color='blue'))
         
-    # 3. 목표점 (초록색 다이아몬드)
+    # 3. 목표점 (초록색 구)
     if env.target_pos is not None:
         target = env.target_pos
-        data.append(go.Scatter3d(
-            x=[target[0]], y=[target[1]], z=[target[2]],
-            mode='markers',
-            marker=dict(size=12, color='green', symbol='diamond'),
-            name='Target'
-        ))
+        data.append(_create_sphere_mesh(target, visual_radius * 1.2, color='green'))
         
-    # 4. 경로 (두꺼운 파이프라인)
+    # 4. 경로 (부피가 있는 파이프)
     if path is not None:
         path_coords = np.array(path)
-        data.append(go.Scatter3d(
-            x=path_coords[:, 0], y=path_coords[:, 1], z=path_coords[:, 2],
-            mode='lines+markers',
-            line=dict(color='cyan', width=8),
-            marker=dict(size=4, color='blue'),
-            name='Pipe Path'
-        ))
         
+        # 각 지점(Joint)에 구 생성 - 방향이 꺾이는 곳만 생성하여 최적화
+        if len(path_coords) > 0:
+            # 시작점
+            data.append(_create_sphere_mesh(path_coords[0], visual_radius, color='cyan', resolution=6))
+            
+            for i in range(1, len(path_coords) - 1):
+                prev = path_coords[i-1]
+                curr = path_coords[i]
+                next_p = path_coords[i+1]
+                
+                # 벡터 계산
+                v1 = curr - prev
+                v2 = next_p - curr
+                
+                # 방향이 다를 때만 조인트 생성 (Vector equality check)
+                if not np.array_equal(v1, v2):
+                    data.append(_create_sphere_mesh(curr, visual_radius, color='cyan', resolution=6))
+            
+            # 끝점
+            data.append(_create_sphere_mesh(path_coords[-1], visual_radius, color='cyan', resolution=6))
+            
+        # 각 구간(Segment)에 원통 생성
+        for i in range(len(path_coords) - 1):
+            p1 = path_coords[i]
+            p2 = path_coords[i+1]
+            cylinder = _create_cylinder_mesh(p1, p2, visual_radius, color='cyan', resolution=6)
+            if cylinder:
+                data.append(cylinder)
+                
     layout = go.Layout(
         title=title,
         scene=dict(

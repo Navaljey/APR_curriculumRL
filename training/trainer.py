@@ -22,16 +22,28 @@ class Trainer:
             env_size = config['size']
             
             # 2. 환경 생성 및 초기화
-            env = NodeEnvironment(*env_size)
+            # 2. 환경 생성 및 초기화
+            env = NodeEnvironment(*env_size, agent_radius=self.params.get('agent_radius', 0) if hasattr(self.params, 'get') else 0)
+            # params가 HyperParameters 객체면 속성 접근, 딕셔너리면 get
+            # 하지만 여기서 self.params는 hyperparams고, agent_radius는 environment_config에 있음.
+            # self.curriculum.env_config.agent_radius 사용해야 함.
+            env = NodeEnvironment(*env_size, agent_radius=self.curriculum.env_config.agent_radius)
             
             # 장애물 배치
+            # 3. 에피소드 초기화
+            start_pos, target_pos = self.curriculum.env_config.create_random_start_end(env_size)
+            state_pos = env.reset(start_pos, target_pos)
+            
+            # 장애물 배치 (Reset 이후에 해야 함)
             obstacles = self.curriculum.env_config.create_random_obstacles(env_size, config['num_obstacles'])
             for obs in obstacles:
                 env.add_obstacle(obs['position'], obs['size'])
             
+            # 시작점이 장애물에 덮라써지지 않도록 재확인 (선택사항)
+            # env._update_grid(start_pos, 2)
+            
             # 3. 에피소드 초기화
-            start_pos, target_pos = self.curriculum.env_config.create_random_start_end(env_size)
-            state_pos = env.reset(start_pos, target_pos)
+            self.reward_calc.reset()
             self.reward_calc.reset()
             
             done = False
@@ -98,19 +110,24 @@ class Trainer:
         
         for ep in range(num_episodes):
             config = self.curriculum.get_current_config()
-            env = NodeEnvironment(*config['size'])
+            config = self.curriculum.get_current_config()
+            env = NodeEnvironment(*config['size'], agent_radius=self.curriculum.env_config.agent_radius)
             
             # 장애물 배치
+            start_pos, target_pos = self.curriculum.env_config.create_random_start_end(config['size'])
+            env.reset(start_pos, target_pos)
+            
+            # 장애물 배치 (Reset 이후에 해야 함)
             obstacles = self.curriculum.env_config.create_random_obstacles(config['size'], config['num_obstacles'])
             for obs in obstacles:
                 env.add_obstacle(obs['position'], obs['size'])
                 
-            start_pos, target_pos = self.curriculum.env_config.create_random_start_end(config['size'])
-            env.reset(start_pos, target_pos)
+            self.reward_calc.reset()
             self.reward_calc.reset()
             
             done = False
             ep_reward = 0
+            steps = 0
             path_history = [env.agent_pos.copy()]
             
             while not done:
@@ -123,6 +140,11 @@ class Trainer:
                 
                 reward = self.reward_calc.calculate_reward(prev_pos, env.agent_pos, env.target_pos, done, info, env)
                 ep_reward += reward
+                steps += 1
+                
+                if steps >= 200:
+                    done = True
+                    info['reason'] = 'max_steps'
                 
             if info.get('reason') == 'goal_reached':
                 success_count += 1

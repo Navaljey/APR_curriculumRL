@@ -56,18 +56,14 @@ class RaySensor:
         return np.array(distances)
 
     def _cast_ray(self, start_pos, direction, env):
-        """단일 방향 레이캐스팅"""
+        """단일 방향 레이캐스팅 (부피 고려)"""
         for step in range(1, self.max_range + 1):
             check_pos = start_pos + direction * step
             
-            # 충돌 체크 (obstacle_manager나 env 메서드 사용 가능하지만 직접 접근)
-            # 경계 벗어남
-            if (check_pos < 0).any() or (check_pos >= env.grid_size).any():
-                return step - 1 # 바로 앞이 벽이면 0
-                
-            # 장애물
-            x, y, z = check_pos
-            if env.grid[x, y, z] == 1: # 1: Obstacle
+            # 환경의 충돌 감지 로직(부피 고려)을 그대로 사용
+            # 주의: _is_collision은 '해당 위치로 이동했을 때'의 충돌을 검사함.
+            # 따라서 check_pos에 agent가 위치한다고 가정하고 검사.
+            if env._is_collision(check_pos):
                 return step - 1
                 
         return self.max_range
